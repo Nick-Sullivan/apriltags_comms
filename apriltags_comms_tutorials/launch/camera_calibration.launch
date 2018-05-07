@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<!-- 
+    Load camera using:
+    http://wiki.ros.org/usb_cam 
+    Calibration using: 
+    http://wiki.ros.org/camera_calibration/Tutorials/MonocularCalibration
+
+     To list all detected video devices, use:
+        ls -ltrh /dev/video* 
+-->
+
+<launch>
+  <arg name="camera_name"     default="camera"/>  <!-- Must match a config file. -->
+  <arg name="camera_config"   default="camera"/>
+  <arg name="camera_frame_id" default="camera"/>
+  <arg name="video_device"    default="/dev/video1"/>
+  <arg name="image_width"     default="1280"/>
+  <arg name="image_height"    default="720"/>
+  <arg name="framerate"       default="30"/>
+  <arg name="pixel_format"    default="yuyv"/>
+  
+  <!-- Start up the camera. -->
+  <node name="$(arg camera_name)" pkg="usb_cam" type="usb_cam_node" output="screen">
+    <param name="video_device"    value="$(arg video_device)"/>
+    <param name="image_width"     value="$(arg image_width)" />
+    <param name="image_height"    value="$(arg image_height)" />
+    <param name="pixel_format"    value="$(arg pixel_format)"/>
+    <param name="camera_frame_id" value="$(arg camera_frame_id)" />
+    <param name="framerate"       value="$(arg framerate)" />
+    <param name="camera_info_url" value="file://$(find apriltags_comms_tutorials)/camera/$(arg camera_config).yaml"/>
+    <param name="camera_name"     value="$(arg camera_name)"/>
+  </node>
+  
+  <!-- Start calibration. -->
+  <node pkg="camera_calibration" type="cameracalibrator.py" name="camera_calibration"
+        output="screen" args="
+        --size 8x6
+        --square 0.108">
+    <remap from="image"  to="$(arg camera_name)/image_raw"/>
+    <remap from="camera" to="$(arg camera_name)"/>
+  </node>
+  
+
+</launch>

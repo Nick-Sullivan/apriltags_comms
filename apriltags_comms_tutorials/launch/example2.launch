@@ -1,0 +1,107 @@
+<?xml version="1.0"?>
+<!-- Launches an observer and a receiver. The observer has a known position
+     (map->base), and a camera that detects apriltags. 
+     
+     The receiver has a box (tag_box) mounted on it, with tag id of 0. It has
+     no way to know its position relative to map, so it uses apriltags_comms
+     to get an estimate.
+     
+     The two use different transformation trees (TF is renamed for receiver) to
+     avoid TF collisions.
+     -->
+
+<launch>  
+  <arg name="camera" default="camera"/>
+  <arg name="pi_on_2" default="1.57079632679"/>
+  <!-- Observer. -->
+  <group>
+    <!-- Create TF geometry. We know the position of the camera relative to the
+         robot. We also convert between camera physical (ROS coords) with 
+         camera optical (OpenCV coords).
+         (x y z yaw pitch roll frame_id child_frame_id period_in_ms).  -->
+    <node name="static_camphys2camopt_tf"   pkg="tf" type="static_transform_publisher"
+      args="0 0 0 -$(arg pi_on_2) 0 -$(arg pi_on_2) cam_phys cam_opt 100"/>
+    <node name="static_base2camphys_tf" pkg="tf" type="static_transform_publisher"
+      args="0 0 0 0 0 0 base_link cam_phys 100"/>
+      
+    <!-- Publish map->base for the observer. -->
+    <node pkg="rostopic" type="rostopic" name="map2base" args="pub 
+        -r 1
+        -s 
+        /map_to_base 
+        nav_msgs/Odometry
+        '{header: {stamp: now, frame_id: map}, 
+          child_frame_id: base_link,
+          pose: {pose: {position: {x: 1,y: 0,z: 0}, 
+                        orientation: {x: 0, y: 0, z: 0, w: 1}}}}' "/>
+    <node name="static_map2base_tf" pkg="tf" type="static_transform_publisher"
+      args="1 0 0 0 0 0 map base_link 100"/>
+      
+    <!-- Launch this computers camera. Cameras should be calibrated.
+         To list all detected video devices use: ls -ltrh /dev/video* -->
+    <include file="$(find apriltags_comms_tutorials)/launch/usb_camera.launch">
+      <arg name="gui"             value="false"/>
+      <arg name="camera_name"     value="$(arg camera)"/>
+      <arg name="camera_config"   value="$(arg camera)"/>
+      <arg name="camera_frame_id" value="cam_opt"/>
+      <arg name="video_device"    value="/dev/video0"/>
+    </include>
+    <node ns="$(arg camera)" pkg="image_proc" type="image_proc" name="image_proc" output="screen"/>
+    
+    <!-- Detect the tags. -->
+    <node pkg="apriltags2_ros" type="apriltags2_ros_continuous_node" name="apriltags2" output="screen">
+      <rosparam command="load" file="$(find apriltags_comms_tutorials)/params/apriltags2-tags.yaml" />
+      <param name="camera_frame"                 value="cam_opt"/>
+      <param name="publish_tf"                   value="true"/>
+      <param name="publish_tag_detections_image" value="true" /> 
+      <remap from="image_rect"  to="$(arg camera)/image_rect" />
+      <remap from="camera_info" to="$(arg camera)/camera_info" />
+    </node>
+    
+    <!-- Communicate apriltags detections to other robots. -->
+    <node pkg="apriltags_comms" type="observer" name="observer" output="screen"> 
+      <param name="base_frame" value="base_link"/>
+    </node>
+  </group>
+  
+  <!-- Receiver. -->
+  <group if="true">
+    <!-- We know the location of the box relative to the base. Apriltag detections
+         uses OpenCV coordinates (Z out of the face), so we need to convert it
+         back to ROS coords (X out of the face). This may not be needed if 
+         accounted for in the bundle.-->
+    <node name="static_base2tagbox_tf" pkg="tf" type="static_transform_publisher"
+      args="0 0 1 0 0 0 base_link tag_box 100">
+      <remap from="/tf"        to="/tf_rec"/>
+      <remap from="/tf_static" to="tf_rec_static"/>
+    </node>
+    <node name="static_tagbox2tagboxopt_tf" pkg="tf" type="static_transform_publisher"
+      args="0 0 0 $(arg pi_on_2) 0 $(arg pi_on_2) tag_box tag_box_opt 100">
+      <remap from="/tf"        to="/tf_rec"/>
+      <remap from="/tf_static" to="tf_rec_static"/>
+    </node>
+      
+    <!-- Receive apriltags comms, and rename the default frame 'Tag0' to our
+         tag box. -->
+    <node pkg="apriltags_comms" type="receiver" name="receiver" output="screen"> 
+      <param name="base_frame" value="base_link"/>
+      <param name="publish_map2base" value="true"/>
+      <rosparam param="tag_frame_remap">["tag_0", "tag_box_opt"]</rosparam>
+      <remap from="/tf"        to="/tf_rec"/>
+      <remap from="/tf_static" to="tf_rec_static"/>
+    </node>
+  </group>
+  
+  <!-- Display on RVIZ. -->
+  <group if="true">
+    <node pkg="rviz" type="rviz" name="rviz_obs"
+        args="-d $(find apriltags_comms_tutorials)/rviz/example2_obs.rviz">
+    </node>
+    <node pkg="rviz" type="rviz" name="rviz_rec" 
+        args="-d $(find apriltags_comms_tutorials)/rviz/example2_rec.rviz">
+      <remap from="/tf"        to="/tf_rec"/>
+      <remap from="/tf_static" to="tf_rec_static"/>
+    </node>
+  </group>   
+  
+</launch>
