@@ -53,6 +53,7 @@ Odometry o_map2base;                 //map->base_link transform.
 ros::Subscriber sub_map2base;
 ros::Subscriber sub_apriltags_comms;
 ros::Publisher  pub_tracked_pose;
+ros::Publisher  pub_interrobot;
 
 tf2_ros::Buffer tfbuffer;            //for transformation lookup
 
@@ -171,17 +172,18 @@ bool getOdomFromTFTree( Odometry& o, string frame1, string frame2, bool use_pres
 
 // Upon tag detection, produce the map2tag and base2tag odometries, then publishes.
 void processAprilTagsComms( AprilTagsCommsMsg comms_msg ){
-  cout << "rec: Received apriltags comms. " << endl;
+  cout << "rec" << robot_id << ": Received apriltags comms. " << endl;
   string tag_frame;
   tag_frame = lookupTagFrameRename(comms_msg.tag_frame);
   cout << "tag_frame: " << tag_frame << endl;
   
-  Odometry o_map2tag;
-  o_map2tag = comms_msg.map2tag;
+  Odometry o_map2tag, o_base2tag;
+  o_map2tag  = comms_msg.map2tag;
+  o_base2tag = comms_msg.base2tag;
   // TF lookup: tag->base(rec)
   PoseWithCovarianceStamped pcs_tag2base;
   if( !getPoseCovFromTFTree( pcs_tag2base, tag_frame, base_frame, false ) ){
-     cout << "rec: Couldn't find posecov" << endl;
+     cout << "rec" << robot_id << ": Couldn't find posecov" << endl;
      return;
    }
   // TF composition: map->base(rec) = map->tag + tag->base(rec)
@@ -195,15 +197,27 @@ void processAprilTagsComms( AprilTagsCommsMsg comms_msg ){
     publishTF(o_map2base);
   }
   
-  cout << "rec: odometry published" << endl;
+  // TF composition: base(obs)->base(rec) = base(obs)->tag + tag->base(rec)
+  std::ostringstream strs, strs2;
+  strs << o_base2tag.header.frame_id << comms_msg.sender_robot_id;
+  strs2 << base_frame << robot_id;
+  Odometry o_base2base;
+  o_base2base.pose            = compose(o_base2tag.pose, pcs_tag2base.pose);
+  o_base2base.header          = o_base2tag.header;
+  o_base2base.header.frame_id = strs.str();
+  o_base2base.child_frame_id  = strs2.str();
+  // Publish odometry.
+  pub_interrobot.publish(o_base2base);
   
-  cout << "rec: map2tag: (" << o_map2tag.pose.pose.position.x << " , " 
+  cout << "rec" << robot_id << ": odometry published" << endl;
+  
+  cout << "rec" << robot_id << ": map2tag: (" << o_map2tag.pose.pose.position.x << " , " 
        << o_map2tag.pose.pose.position.y << " , " 
        << o_map2tag.pose.pose.position.z << ")" << endl;
-  cout << "rec: tag2base: (" << pcs_tag2base.pose.pose.position.x << " , " 
+  cout << "rec" << robot_id << ": tag2base: (" << pcs_tag2base.pose.pose.position.x << " , " 
        << pcs_tag2base.pose.pose.position.y << " , " 
        << pcs_tag2base.pose.pose.position.z << ")" << endl;     
-  cout << "rec: map2base: (" << o_map2base.pose.pose.position.x << " , " 
+  cout << "rec" << robot_id << ": map2base: (" << o_map2base.pose.pose.position.x << " , " 
        << o_map2base.pose.pose.position.y << " , " 
        << o_map2base.pose.pose.position.z << ")" << endl;
        
@@ -251,13 +265,22 @@ void callbackMap2Base(const Odometry::ConstPtr& msg) {
 // where the observed tag is, we'll use that to improve our own pose estimate.
 // Forwards to 'processAprilTagsComms'.
 void callbackAprilTagsComms(const AprilTagsCommsMsg& comms_msg){
-  cout << "rec: Received a callback" << endl;
+  if( comms_msg.sender_robot_id == robot_id ) return;
+  cout << "rec" << robot_id << ": Received a callback" << endl;
   string tag_frame = lookupTagFrameRename(comms_msg.tag_frame);
-  cout << "rec: tag_frame: " << tag_frame << endl;
-  cout << "Checking TF exists from " << tag_frame << " to " << base_frame << endl;
+  cout << "rec" << robot_id << ": tag_frame: " << tag_frame << endl;
+  cout << "rec" << robot_id << ":Checking TF exists from " << tag_frame << " to " << base_frame << endl;
+  ros::Time t, time_now;
   ros::Duration time_wiggle(1.0);
-  if( !tfbuffer.canTransform(tag_frame, base_frame, ros::Time::now()-time_wiggle) ){
-    cout << "rec: no TF exists" << endl;
+  time_now = ros::Time::now();
+  if( time_now.sec > time_wiggle.sec ) {
+    t = time_now - time_wiggle;
+  } else {
+    t = time_now;
+  }
+  cout << "t: " << t.sec << endl;
+  if( !tfbuffer.canTransform(tag_frame, base_frame, t) ){
+    cout << "rec" << robot_id << ": no TF exists" << endl;
     return;
   }
   processAprilTagsComms(comms_msg);
@@ -272,7 +295,8 @@ void loadSubs(ros::NodeHandle n){
 }
 
 void loadPubs(ros::NodeHandle n){
-  pub_tracked_pose = n.advertise<Odometry>("interrobot_tracked_pose", 100);
+  pub_tracked_pose = n.advertise<Odometry>("odometry/tracked", 100);
+  pub_interrobot   = n.advertise<Odometry>("odometry/robot2robot", 10);
 }
 
 // Loads parameters from the launch file. Uses default values if any values are

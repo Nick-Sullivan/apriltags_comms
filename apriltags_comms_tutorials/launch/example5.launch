@@ -1,0 +1,94 @@
+<?xml version="1.0"?>
+<!-- Launches an observer and a receiver in Gazebo.
+     
+     -->
+
+<launch>  
+  
+  <!-- Start Gazebo with an empty world. -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="use_sim_time" value="true"/>
+    <arg name="debug"        value="false"/>
+    <arg name="gui"          value="false"/>
+	  <arg name="headless"     value="false"/>
+    <arg name="paused"       value="false"/>
+    <arg name="world_name"   value="$(find multi_jackal_tutorials)/worlds/empty.world"/>
+  </include>
+  
+  <!-- Spawn the robots. -->
+  <include file="$(find multi_jackal_base)/launch/jackal_base.launch">
+    <arg name="ns"             value="jackal0"/>
+    <arg name="config"         value="aprilcams"/>
+    <arg name="use_global_tf"  value="false"/>
+    <arg name="use_global_ekf" value="true"/>
+  </include>
+  <include file="$(find multi_jackal_base)/launch/jackal_base.launch">
+    <arg name="ns"             value="jackal1"/>
+    <arg name="config"         value="aprilcams"/>
+	  <arg name="config_id"      value="1"/>
+    <arg name="x"              value="2"/>
+    <arg name="yaw"            value="3.14"/>
+    <arg name="use_global_tf"  value="false"/>
+    <arg name="use_global_ekf" value="true"/>
+  </include>
+  
+  <group if="true" ns="jackal0">
+    <!-- Detect the tags. -->
+    <node pkg="apriltags2_ros" type="apriltags2_ros_continuous_node" name="apriltags2" output="screen">
+      <rosparam command="load" file="$(find apriltags_comms_tutorials)/params/apriltags2-tags4.yaml" />
+      <param name="camera_frame"                 value="jackal0/front_camera_optical"/>
+      <param name="publish_tf"                   value="true"/>
+      <param name="publish_tag_detections_image" value="true" /> 
+      <remap from="image_rect"  to="front/image_raw" />
+      <remap from="camera_info" to="front/camera_info" />
+    </node>
+    <!-- Communicate apriltags detections to other robots. -->
+    <node pkg="apriltags_comms" type="observer" name="observer" output="screen"> 
+      <param name="robot_id"    value="0"/>
+      <param name="base_frame"  value="jackal0/base_link"/>
+      <remap from="map_to_base" to="odometry/global_filtered"/>
+    </node>
+    <!-- Receive apriltags comms, and rename the default frame to our tag box. -->
+    <node pkg="apriltags_comms" type="receiver" name="receiver" output="screen"> 
+      <param name="robot_id"         value="0"/>
+      <param name="base_frame"       value="jackal0/base_link"/>
+      <param name="publish_map2base" value="false"/>
+      <rosparam param="tag_frame_remap">["tag_0_1_2_3_4", "jackal0/ar_marker_4"]</rosparam>
+      <remap from="map_to_base"      to="odometry/global_filtered"/>
+    </node>
+  </group>
+  
+  <group if="true" ns="jackal1">
+    <!-- Detect the tags. -->
+    <node pkg="apriltags2_ros" type="apriltags2_ros_continuous_node" name="apriltags2" output="screen">
+      <rosparam command="load" file="$(find apriltags_comms_tutorials)/params/apriltags2-tags4.yaml" />
+      <param name="camera_frame"                 value="jackal1/front_camera_optical"/>
+      <param name="publish_tf"                   value="true"/>
+      <param name="publish_tag_detections_image" value="true" /> 
+      <remap from="image_rect"  to="front/image_raw" />
+      <remap from="camera_info" to="front/camera_info" />
+    </node>
+    <!-- Communicate apriltags detections to other robots. -->
+    <node pkg="apriltags_comms" type="observer" name="observer" output="screen"> 
+      <param name="robot_id"    value="1"/>
+      <param name="base_frame"  value="jackal1/base_link"/>
+      <remap from="map_to_base" to="odometry/global_filtered"/>
+    </node>
+    <!-- Receive apriltags comms, and rename the default frame to our tag box. -->
+    <node pkg="apriltags_comms" type="receiver" name="receiver" output="screen"> 
+      <param name="robot_id"         value="1"/>
+      <param name="base_frame"       value="jackal1/base_link"/>
+      <param name="publish_map2base" value="false"/>
+      <rosparam param="tag_frame_remap">["tag_6_7_8_9_10", "jackal1/ar_marker_10"]</rosparam>
+      <remap from="map_to_base"      to="odometry/global_filtered"/>
+    </node>
+  </group>
+  
+  <!-- Display on RVIZ. -->
+  <group if="true">
+    <node pkg="rviz" type="rviz" name="rviz_obs"
+        args="-d $(find apriltags_comms_tutorials)/rviz/example4.rviz">
+    </node>
+  </group>   
+  
+</launch>

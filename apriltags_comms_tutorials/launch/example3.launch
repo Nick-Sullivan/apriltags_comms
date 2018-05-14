@@ -71,13 +71,13 @@
          (x y z yaw pitch roll frame_id child_frame_id period_in_ms).  -->
     <node name="static_camphys2camopt_tf"   pkg="tf" type="static_transform_publisher"
           args="0 0 0 -$(arg pi_on_2) 0 -$(arg pi_on_2) cam_phys cam_opt 100">
-      <remap from="/tf"        to="/2tf"/>
-      <remap from="/tf_static" to="/2tf_static"/>
+      <remap from="/tf"        to="/rec/tf"/>
+      <remap from="/tf_static" to="/rec/tf_static"/>
     </node>
     <node name="static_base2camphys_tf" pkg="tf" type="static_transform_publisher"
           args="0 0 0 0 0 0 base_link cam_phys 100">
-      <remap from="/tf"        to="/2tf"/>
-      <remap from="/tf_static" to="/2tf_static"/>
+      <remap from="/tf"        to="/rec/tf"/>
+      <remap from="/tf_static" to="/rec/tf_static"/>
     </node>
       
     <!-- Launch this computers camera. Cameras should be calibrated.
@@ -101,16 +101,16 @@
       <param name="publish_tag_detections_image" value="true"/> 
       <remap from="image_rect"  to="$(arg camera2)/image_rect" />
       <remap from="camera_info" to="$(arg camera2)/camera_info" />
-      <remap from="/tf"         to="/2tf"/>
-      <remap from="/tf_static"  to="/2tf_static"/>
+      <remap from="/tf"         to="/rec/tf"/>
+      <remap from="/tf_static"  to="/rectf_static"/>
     </node>
     
     <!-- Receive apriltags comms. -->
     <node pkg="apriltags_comms" type="receiver" name="receiver" output="screen"> 
       <param name="base_frame"       value="base_link"/>
       <param name="publish_map2base" value="true"/>
-      <remap from="/tf"        to="/2tf"/>
-      <remap from="/tf_static" to="/2tf_static"/>
+      <remap from="/tf"        to="/rec/tf"/>
+      <remap from="/tf_static" to="/rec/tf_static"/>
     </node>
   </group>
   
@@ -121,8 +121,8 @@
     </node>
     <node pkg="rviz" type="rviz" name="rviz_rec" 
         args="-d $(find apriltags_comms_tutorials)/rviz/example3_rec.rviz">
-      <remap from="/tf"        to="/2tf"/>
-      <remap from="/tf_static" to="/2tf_static"/>
+      <remap from="/tf"        to="/rec/tf"/>
+      <remap from="/tf_static" to="/rec/tf_static"/>
     </node>
   </group>   
   

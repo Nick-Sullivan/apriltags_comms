@@ -44,7 +44,8 @@ string         base_frame;           //robot frame, moves with each robot
 string         tag_frame_prefix;     //frame of visual tags (minus the num)
 int            robot_id;             //ID of this robot
 vector<double> preset_cov;           //visual detection uncertainty
-
+bool           wait_for_map2base;    //dont do anything until we have a map2base
+bool           bool_map2base;        //true when we have received a map2base message
 Odometry o_map2base;                 //map->base_link transform.
 
 ros::Subscriber sub_map2base;
@@ -163,12 +164,12 @@ void publishInterRobot( string tag_frame, Odometry o_map2tag, Odometry o_base2ta
     msg.map2tag         = o_map2tag;
     msg.base2tag        = o_base2tag;
     pub_apriltags_comms.publish(msg);
-    cout << "obs: Published comms" << endl;
+    cout << "obs" << robot_id << ": Published comms" << endl;
 }
 
 // Upon tag detection, produce the map2tag and base2tag odometries, then publishes.
 void processTagDetection( AprilTagDetection detection ){
-  cout << "obs: Received a tag detection. " << endl;
+  cout << "obs" << robot_id << ": Received a tag detection. " << endl;
   string tag_frame, cam_frame;
   tag_frame = getTagFrame(detection.id);
   cam_frame = detection.pose.header.frame_id;
@@ -179,9 +180,10 @@ void processTagDetection( AprilTagDetection detection ){
   if( !getPoseCovFromTFTree(pcs_base2cam, base_frame, cam_frame, false) ) return;
   // TF composition: base(obs)->tag = base(obs)->cam + cam->tag
   Odometry o_base2tag;
-  o_base2tag.header         = pcs_base2cam.header;
-  o_base2tag.pose           = compose(pcs_base2cam.pose, pcs_cam2tag.pose);
-  o_base2tag.child_frame_id = tag_frame;
+  o_base2tag.header          = pcs_cam2tag.header;
+  o_base2tag.header.frame_id = base_frame;
+  o_base2tag.pose            = compose(pcs_base2cam.pose, pcs_cam2tag.pose);
+  o_base2tag.child_frame_id  = tag_frame;
   // TF composition: map->tag = map->base(obs) + base(obs)->tag
   Odometry o_map2tag;
   o_map2tag.pose           = compose(o_map2base.pose, o_base2tag.pose);
@@ -191,22 +193,25 @@ void processTagDetection( AprilTagDetection detection ){
   // Publish the message.
   publishInterRobot( tag_frame, o_map2tag, o_base2tag );
   
-  cout << "obs: base2cam: (" << pcs_base2cam.pose.pose.position.x << " , " 
+  cout << "obs" << robot_id << ": base2cam: (" << pcs_base2cam.pose.pose.position.x << " , " 
        << pcs_base2cam.pose.pose.position.y << " , " 
        << pcs_base2cam.pose.pose.position.z << ")" << endl;
-  cout << "obs: cam2tag: (" << pcs_cam2tag.pose.pose.position.x << " , " 
+  cout << "obs" << robot_id << ": cam2tag: (" << pcs_cam2tag.pose.pose.position.x << " , " 
        << pcs_cam2tag.pose.pose.position.y << " , " 
        << pcs_cam2tag.pose.pose.position.z << ")" << endl;     
        
-  cout << "obs: map2base: (" << o_map2base.pose.pose.position.x << " , " 
+  cout << "obs" << robot_id << ": map2base: (" << o_map2base.pose.pose.position.x << " , " 
        << o_map2base.pose.pose.position.y << " , " 
        << o_map2base.pose.pose.position.z << ")" << endl;
-  cout << "obs: base2tag: (" << o_base2tag.pose.pose.position.x << " , " 
+  cout << "obs" << robot_id << ": base2tag: (" << o_base2tag.pose.pose.position.x << " , " 
        << o_base2tag.pose.pose.position.y << " , " 
        << o_base2tag.pose.pose.position.z << ")" << endl;
-  cout << "obs: map2tag: (" << o_map2tag.pose.pose.position.x << " , " 
+  cout << "obs" << robot_id << ": map2tag: (" << o_map2tag.pose.pose.position.x << " , " 
        << o_map2tag.pose.pose.position.y << " , " 
        << o_map2tag.pose.pose.position.z << ")" << endl;
+  
+  cout << "bas2cam seq:  " << pcs_base2cam.header.seq << endl;
+  cout << "map2base seq: " << o_map2base.header.seq << endl;
   
 }
 
@@ -218,6 +223,7 @@ void processTagDetection( AprilTagDetection detection ){
 // Keeps track of the most recent map->base transformation.
 void callbackMap2Base(const Odometry::ConstPtr& msg) {
   o_map2base = *msg;
+  bool_map2base = true;
 }
 
 // Callback for apriltags. If pre-checks pass, fowards to 'processTagDetection'.
@@ -227,6 +233,7 @@ void callbackTagDetection(const AprilTagDetectionArray& apriltag_msg){
         ++it){
 	  AprilTagDetection detection = *it;
     if( detection.pose.pose.pose.position.z < 0 ) continue;
+    if( wait_for_map2base && !bool_map2base ) continue;
     processTagDetection(detection);
   }
 }
@@ -247,11 +254,13 @@ void loadPubs(ros::NodeHandle n){
 // missing.
 void loadParams(ros::NodeHandle n_priv){
   // Set default parameters.
-  string default_map_frame        = "map";
-  string default_base_frame       = "base_link";
-  string default_tag_frame_prefix = "ar_marker_";
-  int    default_robot_id         = 0;
-  bool   default_restamp_msgs     = false;
+  bool_map2base = false;
+  string default_map_frame         = "map";
+  string default_base_frame        = "base_link";
+  string default_tag_frame_prefix  = "ar_marker_";
+  bool   default_wait_for_map2base = false;
+  int    default_robot_id          = 0;
+  bool   default_restamp_msgs      = false;
   double default_preset_cov[]     = {0.01,    0,    0,    0,    0,    0,
                                         0, 0.01,    0,    0,    0,    0,
                                         0,    0, 0.01,    0,    0,    0,
@@ -260,10 +269,11 @@ void loadParams(ros::NodeHandle n_priv){
                                         0,    0,    0,    0,    0, 0.05 };
   // Check parameter server to override defaults.
   XmlRpc::XmlRpcValue v;
-  n_priv.param(        "robot_id",         robot_id,         default_robot_id);
-  n_priv.param(       "map_frame",        map_frame,        default_map_frame);
-  n_priv.param(      "base_frame",       base_frame,       default_base_frame);
-  n_priv.param("tag_frame_prefix", tag_frame_prefix, default_tag_frame_prefix);
+  n_priv.param(         "robot_id",          robot_id,          default_robot_id);
+  n_priv.param(        "map_frame",         map_frame,         default_map_frame);
+  n_priv.param(       "base_frame",        base_frame,        default_base_frame);
+  n_priv.param( "tag_frame_prefix",  tag_frame_prefix,  default_tag_frame_prefix);
+  n_priv.param("wait_for_map2base", wait_for_map2base, default_wait_for_map2base);
   if( n_priv.getParam("preset_cov", v) ){       // x y z, roll pitch yaw
     ROS_ASSERT(v.getType() == XmlRpc::XmlRpcValue::TypeArray);
     for(int i=0; i < v.size(); i++)  {

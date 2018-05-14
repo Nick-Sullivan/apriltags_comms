@@ -1,0 +1,145 @@
+<?xml version="1.0"?>
+<!-- Launches an observer and a receiver in Gazebo.
+     
+     -->
+
+<launch>  
+  <arg name="ns0" default="jackal0"/>
+  <arg name="ns1" default="jackal1"/>
+  
+  <!-- Start Gazebo with an empty world. -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="use_sim_time" value="true"/>
+    <arg name="debug"        value="false"/>
+    <arg name="gui"          value="false"/>
+	  <arg name="headless"     value="false"/>
+    <arg name="paused"       value="false"/>
+    <arg name="world_name"   value="$(find multi_jackal_tutorials)/worlds/slow_world.world"/>
+  </include>
+  
+  <!-- Spawn the robots. -->
+  <include file="$(find multi_jackal_base)/launch/jackal_base.launch">
+    <arg name="ns"             value="jackal0"/>
+    <arg name="config"         value="aprilcams"/>
+    <arg name="use_global_tf"  value="false"/>
+    <arg name="use_global_ekf" value="true"/>
+    <arg name="use_move_base"  value="true"/>
+    <arg name="gps_rate"       value="1"/>
+    
+  </include>
+  <include file="$(find multi_jackal_base)/launch/jackal_base.launch">
+    <arg name="ns"             value="jackal1"/>
+    <arg name="config"         value="aprilcams"/>
+	  <arg name="config_id"      value="1"/>
+    <arg name="x"              value="5"/>
+    <arg name="use_global_tf"  value="false"/>
+    <arg name="use_global_ekf" value="true"/>
+    <arg name="use_move_base"  value="true"/>
+    <arg name="gps_rate"       value="1"/>
+  </include>
+  
+  <!-- Detect the tags. -->
+  <group if="true">
+    <node ns="$(arg ns0)" pkg="apriltags2_ros" type="apriltags2_ros_continuous_node" name="apriltags2" output="screen">
+      <rosparam command="load" file="$(find apriltags_comms_tutorials)/params/apriltags2-tags4.yaml" />
+      <param name="camera_frame"                 value="$(arg ns0)/front_camera_optical"/>
+      <param name="publish_tf"                   value="true"/>
+      <param name="publish_tag_detections_image" value="true" /> 
+      <remap from="image_rect"  to="front/image_raw" />
+      <remap from="camera_info" to="front/camera_info" />
+    </node>
+    <node ns="$(arg ns1)" pkg="apriltags2_ros" type="apriltags2_ros_continuous_node" name="apriltags2" output="screen">
+      <rosparam command="load" file="$(find apriltags_comms_tutorials)/params/apriltags2-tags4.yaml" />
+      <param name="camera_frame"                 value="$(arg ns1)/front_camera_optical"/>
+      <param name="publish_tf"                   value="true"/>
+      <param name="publish_tag_detections_image" value="true" /> 
+      <remap from="image_rect"  to="front/image_raw" />
+      <remap from="camera_info" to="front/camera_info" />
+    </node>
+  </group>
+  
+  <!-- Communicate observations. -->
+  <group if="true">
+    <node ns="$(arg ns0)" pkg="apriltags_comms" type="observer" name="observer" output="screen"> 
+      <param name="robot_id"    value="0"/>
+      <param name="base_frame"  value="$(arg ns0)/base_link"/>
+      <remap from="map_to_base" to="odometry/global_filtered"/>
+    </node>
+    <node ns="$(arg ns1)" pkg="apriltags_comms" type="observer" name="observer" output="screen"> 
+      <param name="robot_id"    value="0"/>
+      <param name="base_frame"  value="$(arg ns1)/base_link"/>
+      <remap from="map_to_base" to="odometry/global_filtered"/>
+    </node>
+  </group>
+  
+  <!-- Receive observations. -->
+  <group if="true">
+    <node ns="$(arg ns0)" pkg="apriltags_comms" type="receiver" name="receiver" output="screen"> 
+      <param name="robot_id"         value="0"/>
+      <param name="base_frame"       value="jackal0/base_link"/>
+      <param name="publish_map2base" value="false"/>
+      <rosparam param="tag_frame_remap">["tag_0_1_2_3_4", "jackal0/ar_marker_4"]</rosparam>
+      <remap from="map_to_base"      to="odometry/global_filtered"/>
+    </node>
+    <node ns="$(arg ns1)" pkg="apriltags_comms" type="receiver" name="receiver" output="screen"> 
+      <param name="robot_id"         value="1"/>
+      <param name="base_frame"       value="jackal1/base_link"/>
+      <param name="publish_map2base" value="false"/>
+      <rosparam param="tag_frame_remap">["tag_6_7_8_9_10", "jackal1/ar_marker_10"]</rosparam>
+      <remap from="map_to_base"      to="odometry/global_filtered"/>
+    </node>
+  </group>
+  
+  <!-- Go to waypoints. -->
+  <group if="true">
+    <node ns="$(arg ns0)" pkg="waypoint_follower" type="waypoint_follower_node" name="waypoint_follower" output="screen">
+      <rosparam param="waypoints">[115,  -5,  0,   0, 0, 0, 1,
+                                   115, 115,  0,   0, 0, 0, 1,
+                                   118, 118,  0,   0, 0, 0, 1,
+                                     3, 120,  0,   0, 0, 0, 1]</rosparam>
+      <param name="odom_frame"         value="$(arg ns0)/odom"/>
+      <param name="baselink_frame"     value="$(arg ns0)/base_link"/>
+      <param name="rviz_frame"         value="map"/>
+      <param name="launch_frame"       value="map"/>
+      <param name="include_robot_path" value="true"/>
+    </node>
+    <node ns="$(arg ns1)" pkg="waypoint_follower" type="waypoint_follower_node" name="waypoint_follower" output="screen">
+    <rosparam param="waypoints">[120,   0,  0,   0, 0, 0, 1, 
+                                 120, 120,  0,   0, 0, 0, 1,
+                                   0, 120,  0,   0, 0, 0, 1]</rosparam>
+    <param name="odom_frame"         value="$(arg ns1)/odom"/>
+    <param name="baselink_frame"     value="$(arg ns1)/base_link"/>
+    <param name="rviz_frame"         value="map"/>
+    <param name="launch_frame"       value="map"/>
+    <param name="include_robot_path" value="true"/>
+  </node>
+  </group>
+  
+  <!-- Record. -->
+  <group if="true">
+    <node pkg="rosbag" type="record" name="data_logger" args="
+          -O /home/nick/bag.bag
+          /gazebo/model_states     
+          /jackal0/gps/filtered
+          /jackal0/navsat/fix
+          /jackal0/odometry/robot2robot                        
+          /jackal0/odometry/tracked  
+          /jackal0/odometry/global_filtered
+          /jackal0/odometry/gps
+          /jackal1/gps/filtered
+          /jackal1/navsat/fix
+          /jackal1/odometry/robot2robot                        
+          /jackal1/odometry/tracked  
+          /jackal1/odometry/global_filtered   
+          /jackal1/odometry/gps                
+          "/> 
+  </group>
+  
+  <!-- Display on RVIZ. -->
+  <group if="true">
+    <node pkg="rviz" type="rviz" name="rviz_obs"
+        args="-d $(find apriltags_comms_tutorials)/rviz/example6.rviz">
+    </node>
+  </group>   
+  
+</launch>
