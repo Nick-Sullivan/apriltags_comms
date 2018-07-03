@@ -18,7 +18,6 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   tf
   tf2
-  visual_cl_msgs
 )
 
 ## System dependencies are found with CMake's conventions
@@ -58,6 +57,7 @@ find_package(catkin REQUIRED COMPONENTS
 add_message_files(
   FILES
 	AprilTagsCommsMsg.msg
+  AprilTagsCommsResponseMsg.msg
 )
 
 ## Generate services in the 'srv' folder

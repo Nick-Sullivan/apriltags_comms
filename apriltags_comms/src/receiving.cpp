@@ -16,12 +16,12 @@
 
 #include <pose_cov_ops/pose_cov_ops.h>
 
-/* This node subscribes to a /tag_detections topic (producing tag detections 
+/* This node subscribes to a /tag_detections topic (producing tag detections
  * relative to a cameras optical frame). It then converts each pose
  * (cam->tag) into estimations of where the tag is relative to the origin
  * (map->tag) and where the tag is relative to the observing robot (base->tag).
  * These are then published for use by a receiving node.
- * 
+ *
  *  Written by Nick Sullivan, The University of Adelaide. */
 
 using std::cout;
@@ -46,6 +46,7 @@ int            robot_id;             //ID of this robot
 vector<double> preset_cov;           //visual detection uncertainty
 bool           restamp_msgs;         //received messages are timestamped with the time it was received
 bool           publish_map2base;     //publish the tf from map to base
+double         delay;                //seconds to wait before receiving
 map<string,string> tag_frame_remap;  //
 
 Odometry o_map2base;                 //map->base_link transform.
@@ -74,7 +75,7 @@ void publishTF(Odometry o){
   ts.transform.rotation      = o.pose.pose.orientation;
   br.sendTransform(ts);
 }
- 
+
 // Combines two poses with covariance. Must be in the form
 // A->B->C, where p1 is A->B and p2 is B->C.
 PoseWithCovariance compose(PoseWithCovariance p1,
@@ -88,12 +89,12 @@ PoseWithCovariance compose(PoseWithCovariance p1,
 // was successful.
 bool lookupTransform(TransformStamped &output, string frame1, string frame2, ros::Time t){
   try{
-    cout << "Trying to get from frame: " << frame1 << " to " << frame2 << endl;                           
+    cout << "Trying to get from frame: " << frame1 << " to " << frame2 << endl;
     if (!tfbuffer.canTransform(frame1, frame2, t) ){
       ROS_WARN("Unable to obtain a TF in observing.cpp");
       return false;
     }
-    output = tfbuffer.lookupTransform(frame1, frame2, t);                                         
+    output = tfbuffer.lookupTransform(frame1, frame2, t);
   } catch (tf2::TransformException &ex) {
     ROS_WARN("%s",ex.what());
     return false;
@@ -117,7 +118,7 @@ string lookupTagFrameRename(string tag_frame){
 // from the preset_cov variable.
 PoseWithCovarianceStamped createPoseCovFromTF( TransformStamped tf_msg, bool use_preset_cov ){
   PoseWithCovarianceStamped pcs;
-  pcs.header                = tf_msg.header;  
+  pcs.header                = tf_msg.header;
   pcs.pose.pose.position.x  = tf_msg.transform.translation.x;
   pcs.pose.pose.position.y  = tf_msg.transform.translation.y;
   pcs.pose.pose.position.z  = tf_msg.transform.translation.z;
@@ -130,7 +131,7 @@ PoseWithCovarianceStamped createPoseCovFromTF( TransformStamped tf_msg, bool use
   return pcs;
 }
 
-// Given two TF frames, produces a PoseWithCovarianceStamped message from frame1 to frame2. 
+// Given two TF frames, produces a PoseWithCovarianceStamped message from frame1 to frame2.
 // Optionally populates the covariance with 'preset_cov'.
 bool getPoseCovFromTFTree( PoseWithCovarianceStamped& pcs, string frame1, string frame2, bool use_preset_cov  ){
   TransformStamped ts;
@@ -142,7 +143,7 @@ bool getPoseCovFromTFTree( PoseWithCovarianceStamped& pcs, string frame1, string
   return true;
 }
 
-// Given two TF frames, produces an Odometry message from frame1 to frame2. 
+// Given two TF frames, produces an Odometry message from frame1 to frame2.
 // Optionally populates the covariance with 'preset_cov'.
 bool getOdomFromTFTree( Odometry& o, string frame1, string frame2, bool use_preset_cov  ){
   PoseWithCovarianceStamped pcs;
@@ -170,71 +171,85 @@ bool getOdomFromTFTree( Odometry& o, string frame1, string frame2, bool use_pres
     pub_apriltags_comms.publish(msg);
 }*/
 
-// Upon tag detection, produce the map2tag and base2tag odometries, then publishes.
+// Upon tag detection, produce the map2tag and obs2tag odometries, then publishes.
+// There are a few frames of note:
+//   map: the origin of the map. We wish to localise relative to this.
+//   obs: the base_link of the observer.
+//   cam: the camera of the observer.
+//   tag: the identified tag of the receiver.
+//   rec: the base_link of the receiver.
 void processAprilTagsComms( AprilTagsCommsMsg comms_msg ){
   cout << "rec" << robot_id << ": Received apriltags comms. " << endl;
   string tag_frame;
   tag_frame = lookupTagFrameRename(comms_msg.tag_frame);
   cout << "tag_frame: " << tag_frame << endl;
-  
-  Odometry o_map2tag, o_base2tag;
+
+  Odometry o_map2tag, o_obs2tag;
   o_map2tag  = comms_msg.map2tag;
-  o_base2tag = comms_msg.base2tag;
-  // TF lookup: tag->base(rec)
-  PoseWithCovarianceStamped pcs_tag2base;
-  if( !getPoseCovFromTFTree( pcs_tag2base, tag_frame, base_frame, false ) ){
+  o_obs2tag  = comms_msg.obs2tag;
+  // TF lookup: tag->rec
+  PoseWithCovarianceStamped pcs_tag2rec;
+  if( !getPoseCovFromTFTree( pcs_tag2rec, tag_frame, base_frame, false ) ){
      cout << "rec" << robot_id << ": Couldn't find posecov" << endl;
      return;
    }
-  // TF composition: map->base(rec) = map->tag + tag->base(rec)
-  Odometry o_map2base;
-  o_map2base.pose           = compose(o_map2tag.pose, pcs_tag2base.pose);
-  o_map2base.header         = o_map2tag.header;
-  o_map2base.child_frame_id = base_frame;
-  // Publish odometry.
-  pub_tracked_pose.publish(o_map2base);
-  if( publish_map2base ){
-    publishTF(o_map2base);
+  // TF composition: map->rec = map->tag + tag->rec
+  Odometry o_map2rec;
+  o_map2rec.pose           = compose(o_map2tag.pose, pcs_tag2rec.pose);
+  o_map2rec.header         = o_map2tag.header;
+  o_map2rec.child_frame_id = base_frame;
+  if( restamp_msgs ){
+    o_map2rec.header.stamp = ros::Time::now();
   }
-  
-  // TF composition: base(obs)->base(rec) = base(obs)->tag + tag->base(rec)
-  std::ostringstream strs, strs2;
-  strs << o_base2tag.header.frame_id << comms_msg.sender_robot_id;
-  strs2 << base_frame << robot_id;
-  Odometry o_base2base;
-  o_base2base.pose            = compose(o_base2tag.pose, pcs_tag2base.pose);
-  o_base2base.header          = o_base2tag.header;
-  o_base2base.header.frame_id = strs.str();
-  o_base2base.child_frame_id  = strs2.str();
   // Publish odometry.
-  pub_interrobot.publish(o_base2base);
-  
-  cout << "rec" << robot_id << ": odometry published" << endl;
-  
-  cout << "rec" << robot_id << ": map2tag: (" << o_map2tag.pose.pose.position.x << " , " 
-       << o_map2tag.pose.pose.position.y << " , " 
-       << o_map2tag.pose.pose.position.z << ")" << endl;
-  cout << "rec" << robot_id << ": tag2base: (" << pcs_tag2base.pose.pose.position.x << " , " 
-       << pcs_tag2base.pose.pose.position.y << " , " 
-       << pcs_tag2base.pose.pose.position.z << ")" << endl;     
-  cout << "rec" << robot_id << ": map2base: (" << o_map2base.pose.pose.position.x << " , " 
-       << o_map2base.pose.pose.position.y << " , " 
-       << o_map2base.pose.pose.position.z << ")" << endl;
-       
-  
+  pub_tracked_pose.publish(o_map2rec);
+  if( publish_map2base ){
+    publishTF(o_map2rec);
+  }
+
+  // TF composition: obs->rec = obs->tag + tag->rec
+  std::ostringstream strs, strs2;
+  strs << o_obs2tag.header.frame_id << comms_msg.obs_robot_id;
+  strs2 << base_frame << robot_id;
+  Odometry o_obs2rec;
+  o_obs2rec.pose            = compose(o_obs2tag.pose, pcs_tag2rec.pose);
+  o_obs2rec.header          = o_obs2tag.header;
+  o_obs2rec.header.frame_id = strs.str();
+  o_obs2rec.child_frame_id  = strs2.str();
+  if( restamp_msgs ){
+    o_obs2rec.header.stamp = ros::Time::now();
+  }
+  // Publish odometry.
+  pub_interrobot.publish(o_obs2rec);
+
+
+  ///// Process Response. /////
+  // To change perspective, we must rotate the inter-robot reading by the difference
+  // in yaw between the robots (+180deg). If the robots are orientation in exactly
+  // opposite directions, then the inter-robot reading will be the same.
+  //double obs_yaw, rec_yaw;
+  //tf::Quaternion q_map2obs, q_map2rec;
+  //quaternionMsgToTF(comms_msg.map2obs.pose.orientation, q_map2obs);
+  //obs_yaw = comms_msg.map2obs.pose.orientation.x
+
+  // TF composition: base(rec)->base(obs) = - (base(obs)->base(rec))
+
+  // TF composition: map(rec)->base(obs) = map(rec)->base(rec) + base(rec)->base(obs)
+
+
   /*Odometry o_map_to_reclink, o_obslink_to_reclink, o_map_to_obslink;
 
   // obs->rec = obs->tag + tag->reclink
-  o_obslink_to_reclink.pose           = compose(o_obslink_to_tag.pose, pcs_tag_to_reclink.pose); 
+  o_obslink_to_reclink.pose           = compose(o_obslink_to_tag.pose, pcs_tag_to_reclink.pose);
   o_obslink_to_reclink.header         = o_obslink_to_tag.header;
   o_obslink_to_reclink.child_frame_id = baselink_frame;
   // map->obslink = map->reclink + reclink->obslink
   pc_reclink_to_obslink = invertPoseCov(o_obslink_to_reclink.pose);
-  o_map_to_obslink.pose           = compose(o_map_to_baselink.pose, pc_reclink_to_obslink); 
+  o_map_to_obslink.pose           = compose(o_map_to_baselink.pose, pc_reclink_to_obslink);
   o_map_to_obslink.header         = o_map_to_tag.header;
   o_map_to_obslink.child_frame_id = o_obslink_to_tag.header.frame_id; // check this.
-  
-                                                                                      
+
+
   if( restamp_msgs ){
     o_map_to_reclink.header.stamp     = ros::Time::now();
     o_obslink_to_reclink.header.stamp = ros::Time::now();
@@ -244,11 +259,11 @@ void processAprilTagsComms( AprilTagsCommsMsg comms_msg ){
   if( publish_tf ){
     publishTF(o_map_to_reclink);
   }
-  
+
   // Send response.
   publishInterRobotResponse(sender_id, o_map_to_obslink, o_obslink_to_reclink);
   */
-  
+
 }
 
 
@@ -265,7 +280,7 @@ void callbackMap2Base(const Odometry::ConstPtr& msg) {
 // where the observed tag is, we'll use that to improve our own pose estimate.
 // Forwards to 'processAprilTagsComms'.
 void callbackAprilTagsComms(const AprilTagsCommsMsg& comms_msg){
-  if( comms_msg.sender_robot_id == robot_id ) return;
+  if( comms_msg.obs_robot_id == robot_id ) return;
   cout << "rec" << robot_id << ": Received a callback" << endl;
   string tag_frame = lookupTagFrameRename(comms_msg.tag_frame);
   cout << "rec" << robot_id << ": tag_frame: " << tag_frame << endl;
@@ -285,13 +300,13 @@ void callbackAprilTagsComms(const AprilTagsCommsMsg& comms_msg){
   }
   processAprilTagsComms(comms_msg);
 }
- 
+
 /**************************************************
  * Initialising functions
  **************************************************/
 void loadSubs(ros::NodeHandle n){
   sub_apriltags_comms = n.subscribe("/apriltags_comms", 100, callbackAprilTagsComms);
-  sub_map2base        = n.subscribe("map_to_base", 100, callbackMap2Base);                                               
+  //sub_map2base        = n.subscribe("map_to_base", 100, callbackMap2Base);
 }
 
 void loadPubs(ros::NodeHandle n){
@@ -309,6 +324,7 @@ void loadParams(ros::NodeHandle n_priv){
   int    default_robot_id         = 0;
   bool   default_restamp_msgs     = false;
   bool   default_publish_map2base = false;
+  double default_delay            = 0;
   // Check parameter server to override defaults.
   XmlRpc::XmlRpcValue v;
   n_priv.param(        "robot_id",         robot_id,         default_robot_id);
@@ -317,6 +333,7 @@ void loadParams(ros::NodeHandle n_priv){
   n_priv.param("tag_frame_prefix", tag_frame_prefix, default_tag_frame_prefix);
   n_priv.param(    "restamp_msgs",     restamp_msgs,     default_restamp_msgs);
   n_priv.param("publish_map2base", publish_map2base, default_publish_map2base);
+  n_priv.param(           "delay",            delay,            default_delay);
   bool flip = true;
   string key;
   if( n_priv.getParam("tag_frame_remap", v) ){       // default_name, new_name
@@ -348,7 +365,7 @@ int main(int argc, char** argv){
   loadParams(n_priv);
   loadPubs(n);
   loadSubs(n);
+  ros::Duration(delay).sleep();
   ros::spin();
   return 0;
 };
-
