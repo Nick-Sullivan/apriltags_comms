@@ -64,16 +64,29 @@ class observer:
     # Rotate detection according to the camera that observed it.
     pi  = 3.14159265
     yaw = 0;
-    if   header.frame_id == 'left_camera_optical':
+    #if   header.frame_id == 'left_camera_optical':
+    #  yaw +=  pi/2
+    #elif header.frame_id == 'right_camera_optical':
+    #  yaw += -pi/2
+    #elif header.frame_id == 'forward_camera_optical':
+    #  yaw +=  0
+    #elif header.frame_id == 'backward_camera_optical':
+    #  yaw +=  pi
+    #else:
+    #  print('Incorrect frame id')
+    #  print( header.frame_id )
+    if   "left_camera_optical" in header.frame_id:
       yaw +=  pi/2
-    elif header.frame_id == 'right_camera_optical':
+    elif "right_camera_optical" in header.frame_id:
       yaw += -pi/2
-    elif header.frame_id == 'forward_camera_optical':
+    elif "forward_camera_optical" in header.frame_id or "front_camera_optical" in header.frame_id:
       yaw +=  0
-    elif header.frame_id == 'backward_camera_optical':
+    elif "backward_camera_optical" in header.frame_id:
       yaw +=  pi
     else:
       print('Incorrect frame id')
+      print( header.frame_id )
+      
     dx2   = dx* cos(-yaw) + dy*sin(-yaw)
     dy2   = dx*-sin(-yaw) + dy*cos(-yaw)
     dyaw2 = dyaw + yaw

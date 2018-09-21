@@ -12,7 +12,7 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   message_generation
   nav_msgs
-  pose_cov_ops
+ # pose_cov_ops
   rospy
   sensor_msgs
   std_msgs
